@@ -1,0 +1,27 @@
+{
+  "name": "uk-crime-stringer",
+  "version": "1.0.0",
+  "description": "UK crime stringer.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oncletom/uk-crime-stringer.git"
+  },
+  "keywords": [
+    "bbc",
+    "datastringer",
+    "datastringer-plugin"
+  ],
+  "author": "",
+  "license": "Apache-2",
+  "bugs": {
+    "url": "https://github.com/oncletom/uk-crime-stringer/issues"
+  },
+  "homepage": "https://github.com/oncletom/uk-crime-stringer",
+  "dependencies": {
+    "synchronize": "^0.9.8"
+  }
+}
