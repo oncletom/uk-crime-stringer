@@ -1,114 +1,122 @@
-//todo: mettre le mois dans le triggerResult
-var sync = require('synchronize');
-var utils = require('./utils.js');
+'use strict';
 
-function stringer(lat, lng, numberOfMonths, threshold, callback) {
+var _defaults = require('lodash.defaults');
+var Promise = require('es6-promise').Promise;
 
-  sync.fiber(function() {
-    // get last update date, so that we know where to start from.
-    var dateJson = sync.await(utils.getTheJSON(
-      "http://data.police.uk/api/crime-last-updated", sync.defer()));
+var DEFAULTS = {
+  lat: null,
+  lng: null,
+  mounthCount: null,
+  threshold: null
+};
 
-    var currentDate = new Date(JSON.parse(dateJson).date);
+function getLastUpdateTimeRef(stringer){
+  return new Promise(function(resolve, reject){
+    stringer.cache.read('crime-stringer-reference:lastUpdate', function(err, lastUpdateTimeRef){
+      if (err){
+        return reject(err);
+      }
 
-    var lastUpdateTimeRef = new Date(0);
-    try {
-      var refJSON = sync.await(utils.readAsset('crime-stringer-reference/lastUpdate ' +
-          lat + '-' + lng + '.json', sync.defer()));
-      lastUpdateTimeRef = new Date(JSON.parse(refJSON));
-    }
-    catch(except) {
-    }
+      resolve(lastUpdateTimeRef);
+    });
+  });
+}
+
+module.exports = function (stringer, options) {
+  var configuredOptions = _defaults(options, DEFAULTS);
+
+  // get last update date, so that we know where to start from.
+  Promise.all([
+    stringer.http.get('http://data.police.uk/api/crime-last-updated'),
+    getLastUpdateTimeRef(stringer)
+  ])
+  .then(function(results){
+    var lastUpdateTimeRef = results[1];
+    var currentDate = new Date(results[0].data.date);
 
     if (currentDate <= lastUpdateTimeRef) {
       return;
     }
 
-    utils.writeAsset('crime-stringer-reference/lastUpdate.json', JSON.stringify(currentDate),
-    function(err) {
-      console.log(err);
-    });
+    stringer.cache.write(
+      'crime-stringer-reference:lastUpdate',
+      JSON.stringify(currentDate)
+    );
 
+    return currentDate;
+  })
+  .then(getCrimeArrayFromDate(stringer, options))
+  .then(getCategoriesFromCrimeResponses(stringer, options))
+  .catch(console.error.bind(console));
+};
+
+function getCrimeArrayFromDate(stringer, options){
+  return function(currentDate) {
     var baseQuery = "http://data.police.uk/api/crimes-street/all-crime?lat=" +
-      lat + "&lng=" + lng;
+      options.lat + "&lng=" + options.lng;
 
-    // query crime stats for each month
-    var crimeArray = [];
-    while (numberOfMonths) {
+    var requests = [];
+
+    while (options.mounthCount--) {
       // build query for current month
       var currMonth = currentDate.getMonth() + 1; // months start at 0 ¬_¬
       currMonth = currMonth > 9 ? String(currMonth) : '0' + String(currMonth);
       var timeQuery = "&date=" + currentDate.getFullYear() + "-" + currMonth;
 
       console.log('police-uk: fetching data for ' + timeQuery);
-      try {
-        var data = sync.await(crimeQuery(baseQuery + timeQuery, sync.defer()));
-        crimeArray.push(data);
-      } catch (e) {
-        console.log('caught exception while fetching data for ' + currentDate +
-          ', skipping to next month');
-      }
+      requests.push(stringer.http.get(baseQuery + timeQuery, { transformResponse: transformCrimeResponse}));
 
       currentDate.setMonth(currentDate.getMonth() - 1);
-      numberOfMonths--;
     }
 
-    // compute average for each category, over the time range
-    var categories = Object.keys(crimeArray[0]);
-    numberOfMonths = crimeArray.length;
-    var categoryAverages = {};
-    for (var c = 0; c < categories.length; c++) {
-      var cat = categories[c];
-      categoryAverages[cat] = 0;
+    return Promise.all(requests);
+  };
+}
 
-      for (var i = 0; i < crimeArray.length; i++) {
-        if (cat in crimeArray[i]) {
-          categoryAverages[cat] += crimeArray[i][cat];
+function getCategoriesFromCrimeResponses(stringer, options){
+  var callback = console.log.bind(console);
+
+  return function(responses){
+    // compute average for each category, over the time range
+    var categories = Object.keys(responses[0].data);
+    var numberOfMonths = responses.length;
+    var categoryAverages = {};
+
+    categories.forEach(function(cat){
+      categoryAverages[cat] = responses.reduce(function(total, response){
+        if (cat in response.data) {
+          return total + response.data[cat];
         }
-      }
+      }, 0);
 
       categoryAverages[cat] /= numberOfMonths;
-    }
+    });
 
     // for each category, compute the diff btw crime amount for last month and
     // average.
     // callback if > threshold
-    for (var c = 0; c < categories.length; c++) {
-      var cat = categories[c];
-      var categoryDiff = (crimeArray[0][cat] - categoryAverages[cat]) / categoryAverages[cat] * 100;
+    categories.forEach(function(cat){
+      var categoryDiff = (responses[0].data[cat] - categoryAverages[cat]) / categoryAverages[cat] * 100;
 
-
-      if (Math.abs(categoryDiff) > Math.abs(threshold)) {
+      if (Math.abs(categoryDiff) > Math.abs(options.threshold)) {
+        //todo: mettre le mois dans le triggerResult
         callback('crime-stringer', cat + ', diff: ' + categoryDiff);
       }
-    }
-  });
-} //stringer
-
-function crimeQuery(path_json, callback) {
-  utils.getTheJSON(path_json, process);
-
-  function process(err, json) {
-    if (err) {
-      callback(err);
-      return;
-    }
-
-    if (!json) {
-      callback('No JSON could be fetched for ' + path_json);
-      return;
-    }
-
-    var data = JSON.parse(json);
-    var monthCrimeStat = {};
-    for (var i = 0; i < data.length; i++) {
-      if (!(data[i].category in monthCrimeStat)) {
-        monthCrimeStat[data[i].category] = 0; // 1st crime seen for this category
-      }
-      monthCrimeStat[data[i].category] += 1;
-    }
-    callback(undefined, monthCrimeStat);
-  }
+    });
+  };
 }
 
-module.exports = stringer;
+function transformCrimeResponse(response) {
+  var monthCrimeStat = {};
+  var data = JSON.parse(response);
+
+  data.forEach(function(crimeRecord){
+    if (!(crimeRecord.category in monthCrimeStat)) {
+      monthCrimeStat[crimeRecord.category] = 0; // 1st crime seen for this category
+    }
+
+    monthCrimeStat[crimeRecord.category] += 1;
+  });
+
+  return monthCrimeStat;
+}
