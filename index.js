@@ -6,7 +6,7 @@ var Promise = require('es6-promise').Promise;
 var DEFAULTS = {
   lat: null,
   lng: null,
-  mounthCount: null,
+  monthCount: null,
   threshold: null
 };
 
@@ -38,15 +38,12 @@ module.exports = function (stringer, options) {
       return;
     }
 
-    stringer.cache.write(
-      'crime-stringer-reference:lastUpdate',
-      JSON.stringify(currentDate)
-    );
+    stringer.cache.write('crime-stringer-reference:lastUpdate', currentDate);
 
     return currentDate;
   })
-  .then(getCrimeArrayFromDate(stringer, options))
-  .then(getCategoriesFromCrimeResponses(stringer, options))
+  .then(getCrimeArrayFromDate(stringer, configuredOptions))
+  .then(getCategoriesFromCrimeResponses(stringer, configuredOptions))
   .catch(console.error.bind(console));
 };
 
@@ -57,7 +54,7 @@ function getCrimeArrayFromDate(stringer, options){
 
     var requests = [];
 
-    while (options.mounthCount--) {
+    while (options.monthCount--) {
       // build query for current month
       var currMonth = currentDate.getMonth() + 1; // months start at 0 ¬_¬
       currMonth = currMonth > 9 ? String(currMonth) : '0' + String(currMonth);
@@ -74,35 +71,39 @@ function getCrimeArrayFromDate(stringer, options){
 }
 
 function getCategoriesFromCrimeResponses(stringer, options){
-  var callback = console.log.bind(console);
-
   return function(responses){
     // compute average for each category, over the time range
     var categories = Object.keys(responses[0].data);
     var numberOfMonths = responses.length;
-    var categoryAverages = {};
+    var categoryFigures = {};
+    var results = {};
 
     categories.forEach(function(cat){
-      categoryAverages[cat] = responses.reduce(function(total, response){
+      categoryFigures[cat] = {};
+
+      categoryFigures[cat].average = responses.reduce(function(total, response){
         if (cat in response.data) {
           return total + response.data[cat];
         }
       }, 0);
 
-      categoryAverages[cat] /= numberOfMonths;
+      categoryFigures[cat].average /= numberOfMonths;
     });
 
     // for each category, compute the diff btw crime amount for last month and
     // average.
     // callback if > threshold
     categories.forEach(function(cat){
-      var categoryDiff = (responses[0].data[cat] - categoryAverages[cat]) / categoryAverages[cat] * 100;
+      categoryFigures[cat].diff = (responses[0].data[cat] - categoryFigures[cat].average) / categoryFigures[cat].average * 100;
 
-      if (Math.abs(categoryDiff) > Math.abs(options.threshold)) {
-        //todo: mettre le mois dans le triggerResult
-        callback('crime-stringer', cat + ', diff: ' + categoryDiff);
+      if (Math.abs(categoryFigures[cat].diff) > Math.abs(options.threshold)) {
+        results[cat] = categoryDiff;
       }
     });
+
+    stringer.cache.write('crime-stringer-reference:figures', categoryFigures);
+
+    return results;
   };
 }
 
