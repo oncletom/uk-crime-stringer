@@ -97,7 +97,7 @@ function getCategoriesFromCrimeResponses(stringer, options){
       categoryFigures[cat].diff = (responses[0].data[cat] - categoryFigures[cat].average) / categoryFigures[cat].average * 100;
 
       if (Math.abs(categoryFigures[cat].diff) > Math.abs(options.threshold)) {
-        results[cat] = categoryDiff;
+        results[cat] = categoryFigures[cat].diff;
       }
     });
 
