@@ -26,7 +26,7 @@ module.exports = function (stringer, options) {
   var configuredOptions = _defaults(options, DEFAULTS);
 
   // get last update date, so that we know where to start from.
-  Promise.all([
+  return Promise.all([
     stringer.http.get('http://data.police.uk/api/crime-last-updated'),
     getLastUpdateTimeRef(stringer)
   ])
